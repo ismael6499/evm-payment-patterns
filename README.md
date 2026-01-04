@@ -1,38 +1,46 @@
-# 💸 Secure Ether Handling: Modern Payment Patterns on EVM
+# 💸 Secure Settlement Core: EVM Payment Patterns
 
-A reference implementation for secure native value transfers on Ethereum, focusing on forward compatibility, gas efficiency, and reentrancy protection.
+![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?style=flat-square&logo=solidity)
+![Security](https://img.shields.io/badge/Security-Reentrancy_Safe-green?style=flat-square)
+![License](https://img.shields.io/badge/License-GPL_3.0-blue?style=flat-square)
 
-## 🚀 Engineering Context
+A robust reference implementation for handling native Ether (ETH) settlements on the EVM. This project establishes secure patterns for receiving, holding, and distributing value, addressing the obsolescence of legacy transfer methods.
 
-As a **Java Software Engineer**, implementing payments typically involves integrating third-party APIs (like Stripe/PayPal) or handling ACID transactions in a centralized database.
+Unlike deprecated `.transfer()` or `.send()` methods—which impose a hard 2300 gas limit incompatible with modern Smart Contract Wallets (Account Abstraction/Gnosis Safe)—this architecture utilizes low-level `call` opcodes wrapped in defensive logic to ensure interoperability and safety.
 
-In **Solidity**, value transfer is a native language primitive. This project explores the security implications of this paradigm shift, specifically focusing on the transition from legacy patterns (`transfer`/`send`) to modern standards (`call`) required for interoperability with Smart Wallets.
+## 🏗 Architecture & Design Decisions
 
-## 💡 Project Overview
+### 1. Settlement Security (The `.call` Standard)
+- **Forward-Compatible Transfers:**
+  - Implemented `(bool success, ) = recipient.call{value: amount}("")` to execute payouts.
+  - **Why:** This prevents "Out of Gas" DoS attacks when interacting with complex receiver contracts (e.g., Multisigs or DAOs) that require more than 2300 gas to trigger their own receipts (`receive` functions).
+- **Return Value Validation:** Strict enforcement of the boolean success flag to prevent silent failures during value transfer.
 
-The goal of this contract is to implement a robust payment gateway that handles ETH deposits and withdrawals. It addresses the limitations of hardcoded gas limits found in older Solidity versions and implements observability patterns for off-chain indexing.
+### 2. Calldata Hygiene (Receive vs. Fallback)
+- **Explicit Separation:**
+  - `receive() external payable`: Strictly handles empty-calldata ETH transfers (standard wallet sends).
+  - `fallback() external payable`: Handles calls with data payload that do not match a function signature.
+  - **Benefit:** clearly distinguishing intent allows the contract to reject erroneous interactions or implement distinct logic for pure funding vs. arbitrary execution attempts.
 
-### 🔍 Key Technical Features:
+### 3. Checks-Effects-Interactions (CEI)
+- **Reentrancy Mitigation:**
+  - State changes (balances updates) occur *strictly before* the external `.call` to the recipient. This architectural discipline neutralizes reentrancy vectors without necessarily relying on heavy `ReentrancyGuard` modifiers for simple transfer logic.
 
-* **Modern Transfer Logic (`.call` vs `transfer`):**
-    * **Architecture Decision:** Deprecated the legacy `transfer()` function (which imposes a hardcoded 2300 gas limit).
-    * **Solution:** Implemented `.call{value: amount}("")`. This ensures forward compatibility with Abstract Accounts and Gnosis Safes that may require more gas to process a receipt, preventing the contract from becoming obsolete as gas costs change.
+## 🛠 Tech Stack
 
-* **Direct Deposits (`receive`):**
-    * Implemented the `receive() external payable` fallback function. This enables the contract to function as a seamless wallet destination, accepting direct ETH transfers without requiring specific calldata execution.
+* **Core:** Solidity `^0.8.24`
+* **Patterns:** CEI (Checks-Effects-Interactions), Low-level Call
+* **Standards:** Solidity 0.6.x+ Payment Splitter conventions
+* **License:** GNU GPL v3
 
-* **Gas Optimization (Custom Errors):**
-    * **Bytecode Reduction:** Replaced expensive `require` strings with `error TransferFailed()` and `error InsufficientBalance()`. This significantly reduces deployment costs and runtime execution gas compared to storing and processing ASCII error strings.
+## 📝 Contract Interface
 
-* **Observability (Events):**
-    * Emitted indexed `Deposit` and `Withdrawal` events to allow off-chain indexers (like The Graph) to track the flow of funds and reconstruct historical balances efficiently.
+The implementation exposes a secured payout interface compatible with EOAs and Contract Wallets:
 
-## 🛠️ Stack & Tools
-
-* **Language:** Solidity `^0.8.24`.
-* **Patterns:** Checks-Effects-Interactions (CEI), Withdrawal Pattern.
-* **License:** GPL-3.0-only.
-
----
-
-*This project serves as a secure baseline for handling native asset transfers in decentralized applications.*
+```solidity
+// Secure pattern for withdrawals
+function withdraw() external {
+    uint256 amount = address(this).balance;
+    (bool success, ) = owner.call{value: amount}("");
+    if (!success) revert TransferFailed();
+}
